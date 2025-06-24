@@ -1,0 +1,62 @@
+---
+title: ""
+author: ""
+date: ""
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Harmony Healthcare - Seleccion de Variables
+
+<br>
+
+**Problema**
+
+Determinar qué características de los pacientes son las más predictivas de las visitas a la sala de emergencias (ER) es un desafío importante en el ámbito de la atención médica. La identificación de estas variables puede ayudar a las organizaciones de salud a reducir las admisiones innecesarias a la ER y mejorar la atención al paciente. En este proyecto, analizamos un conjunto de datos proporcionado por Harmony HealthCare para identificar las características más relevantes que predicen las visitas a la ER.
+
+```{r}
+library(readr)
+HH_Data <- read.csv("C:/Users/h703294449/OneDrive - Hofstra University/Hofstra/Service/EMALCA Honduras 2025/Curso de Aprendizaje Estadistico/HarmonyHealthcareData.csv", stringsAsFactors = FALSE)
+```
+
+```{r}
+library(dplyr)
+y <- HH_Data$Admission
+x <- HH_Data %>%
+  select(where(is.numeric), -Admission) %>%
+  as.matrix()
+```
+
+```{r}
+library(glmnet)
+set.seed(42)
+
+lasso_model <- cv.glmnet(x, y, alpha = 1, family = "binomial")
+best_lambda <- lasso_model$lambda.min
+cat("Best lambda (from cross-validation): ", best_lambda, "\n")
+plot(lasso_model)
+```
+
+```{r}
+coef_lasso <- predict(lasso_model, type = "coefficients", s = best_lambda)
+coef_lasso_df <- as.data.frame(as.matrix(coef_lasso))
+colnames(coef_lasso_df) <- "coefficient"
+coef_lasso_df$feature <- rownames(coef_lasso_df)
+
+coef_lasso_df <- subset(coef_lasso_df)#, feature != "(Intercept)" & coefficient != 0)
+coef_lasso_df[order(abs(coef_lasso_df$coefficient), decreasing = TRUE), ][1:20, ]
+```
+
+**Que quieren decir los resultados?**
+
+LASSO (Least Absolute Shrinkage and Selection Operator) es una técnica de regresión que se utiliza para la selección de variables y la regularización. En este proyecto, aplicamos LASSO para identificar las características más relevantes que predicen las visitas a la sala de emergencias (ER) en un conjunto de datos de Harmony HealthCare:
+
+- HCC Risk Score: Chronic Condition Risk
+- Active Medications
+- Missed Appointments
+- BMI
+- Mental Metrics
+- Covid 19 Vaccine Status

@@ -1,0 +1,37 @@
+---
+title: "Proyecto Harmony HealthCare"
+author: "Angel Pineda"
+date: "2025-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Proyecto Harmony HealthCare
+
+El objectivo de este proyecto es encontrar los variables que mas contribuyen a que un paciente use la sala de emergencia.  Los datos tienen 2821 pacientes y 675 variables.  El proyecto se desarrolla en R.
+
+# Structura del proyecto
+
+El proyecto tiene tres componentes:
+
+1. Limpieza, procesamiento y visualización de datos (eliminación de variables vacías, imputación de información faltante, renombramiento de variables, visualización de relaciones entre variables)
+
+2. Selección de características (estudio de estrategias para identificar las variables más predictivas del uso de la sala de emergencia)
+
+3. Validación (estudio de estrategias para determinar la utilidad de los resultados, por ejemplo, entrenamiento, validación, prueba, validación cruzada, remuestreo)
+
+
+
+```{r}
+library(readr)
+HarmonyHealthcareData <- read_csv("C:/Users/h703294449/OneDrive - Hofstra University/Hofstra/Service/EMALCA Honduras 2025/Curso de Aprendizaje Estadistico/HarmonyHealthcareData.csv")
+View(HarmonyHealthcareData)
+head(HarmonyHealthcareData)
+
+# Exploración de los datos
+boxplot(HarmonyHealthcareData$Active.Medications~HarmonyHealthcareData$Admission, xlab = 'Admision al departmento de emergencia', ylab = 'numero de medicaciones')
+```
+
