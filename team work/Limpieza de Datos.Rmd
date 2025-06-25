@@ -1,0 +1,263 @@
+---
+title: "Preparacion de Datos Previo Análisis Estadístico de Harmony Health Care"
+author: "Rene Baca, Fabricio Murillo"
+date: "2025-06-25"
+output:
+  html_notebook:
+    toc: true
+    toc_float: true
+    theme: united
+    number_sections: true
+---
+
+# Fase 0: Configuracion del Entorno y Carga de Datos
+
+En esta fase inicial, establecemos la configuracion del proyecto para asegurar la compatibilidad y reproducibilidad, especialmente manejando la codificacion de texto para soportar caracteres en espanol.
+
+## 0.1. Solucion Definitiva para la Codificacion de Caracteres
+
+```{r setup, include=FALSE}
+# Encoding
+knitr::opts_knit$set(encoding = "UTF-8")
+
+# Opciones globales para los chunks de codigo del notebook.
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## 0.2. Carga de Librerias y Datos
+
+Cargaremos las librerias esenciales y realizaremos una primera inspeccion del dataset crudo.
+
+```{r load_libraries}
+# Cargamos las librerias de R necesarias para la manipulacion, limpieza y resumen de datos.
+library(tidyverse)
+library(janitor)
+library(skimr)
+```
+
+```{r load_data}
+# Cargamos el dataset de Harmony Health Care.
+raw_df <- read_csv("HarmonyHealthcareData.csv")
+
+# Mostramos una captura para entender el estado inicial de los datos.
+cat("--- ESTADO INICIAL: DATOS CRUDOS ---\n")
+skim(raw_df)
+```
+
+# Fase 1: Integridad Fundacional de los Datos
+
+Ahora aplicamos las limpiezas basicas que son prerrequisito para cualquier analisis valido.
+
+## 1.1. Estandarizacion de Nombres de Columnas y Valores Nulos
+
+```{r clean_and_harmonize}
+# Usamos la funcion clean_names() para estandarizar los nombres de columnas.
+cleaned_df <- raw_df %>%
+  clean_names()
+
+# Definimos un vector completo con todas las cadenas de texto que representan datos faltantes.
+na_strings <- c("unknown", "unreported/choose not to disclose", 
+              "unreported/choose not to disclose race", "unreported/choose not to disclose ethnicity",
+              "missing", "no record", "unmapped", "refused", "")
+
+# Iterativamente, reemplazamos cada una de estas cadenas con NA.
+for (na_str in na_strings) {
+  cleaned_df <- cleaned_df %>%
+    mutate(across(where(is.character), ~na_if(., na_str)))
+}
+
+cat("Nombres de columna estandarizados y valores nulos armonizados a NA.\n")
+```
+
+## 1.2. Analisis y Eliminacion de la Variable `age`
+
+```{r remove_age}
+# Justificacion: Como se determino, no existe una fecha de referencia fiable para calcular
+# la edad de los pacientes. Para mantener la integridad del analisis, se elimina la columna.
+cleaned_df <- cleaned_df %>%
+  dplyr::select(-age)
+
+cat("La columna 'age' ha sido eliminada.\n")
+```
+
+# Fase 2: Ingenieria de Caracteristicas por Dominio Clinico
+
+Aqui es donde creamos valor, transformando datos crudos en predictores inteligentes.
+
+## 2.1. Dominio: Demografia y Contexto Social
+
+```{r engineer_demographics}
+# Iniciamos el pipeline de ingenieria de caracteristicas.
+features_df <- cleaned_df %>%
+  # Bandera de Incongruencia de Genero y Sexo
+  mutate(
+    gender_incongruence_flag = if_else(ehr_sex != sex_at_birth, 1, 0, missing = 0)
+  ) %>%
+  # Agrupacion de Raza y Etnicidad
+  mutate(
+    race_clean = fct_lump_prop(race, prop = 0.01, other_level = "race_other"),
+    ethnicity_clean = fct_lump_prop(ethnicity, prop = 0.01, other_level = "ethnicity_other")
+  ) %>%
+  # Inteligencia Geoespacial a partir del Codigo Postal (ZIP)
+  mutate(
+    zip_3_digit = str_sub(zip, 1, 3)
+  )
+
+cat("Caracteristicas demograficas creadas.\n")
+```
+
+## 2.2. Dominio: Determinantes Sociales de la Salud (SDOH)
+
+```{r engineer_sdoh}
+features_df <- features_df %>%
+  # Deconstruccion de los "Triggers" de SDOH desde el Texto
+  mutate(
+    sdoh_financial_strain = if_else(str_detect(sdoh_triggers, "fpl|insurance|financial"), 1, 0, missing = 0),
+    sdoh_food_insecurity = if_else(str_detect(sdoh_triggers, "food|nutrition"), 1, 0, missing = 0),
+    sdoh_housing_insecurity = if_else(str_detect(sdoh_triggers, "housing"), 1, 0, missing = 0),
+    sdoh_transportation_issue = if_else(str_detect(sdoh_triggers, "transportation"), 1, 0, missing = 0)
+  ) %>%
+  # Creacion de la Caracteristica "Ingreso Per Capita"
+  mutate(
+    income_per_capita = if_else(household_size_detail > 0, household_income_detail / household_size_detail, NA_real_)
+  )
+
+cat("Caracteristicas de SDOH creadas.\n")
+```
+
+## 2.3. Dominio: Signos Vitales y Mediciones Clinicas
+
+```{r engineer_vitals}
+features_df <- features_df %>%
+  # Parseo de la Presion Arterial
+  separate(blood_pressure_value, into = c("blood_pressure_systolic", "blood_pressure_diastolic"), sep = "/", convert = TRUE, remove = FALSE) %>%
+  # Validacion de Rangos Clinicos
+  mutate(
+    most_recent_bmi_value = if_else(between(most_recent_bmi_value, 15, 60), most_recent_bmi_value, NA_real_),
+    numeric_a1c_result = if_else(between(numeric_a1c_result, 3.5, 20), numeric_a1c_result, NA_real_),
+    blood_pressure_systolic = if_else(between(blood_pressure_systolic, 70, 250), blood_pressure_systolic, NA_real_),
+    blood_pressure_diastolic = if_else(between(blood_pressure_diastolic, 40, 150), blood_pressure_diastolic, NA_real_)
+  ) %>%
+  # Creacion de Categorias Clinicas (Binning)
+  mutate(
+    bp_category = case_when(
+      blood_pressure_systolic < 120 & blood_pressure_diastolic < 80 ~ "Normal",
+      blood_pressure_systolic < 130 & blood_pressure_diastolic < 80 ~ "Elevated",
+      blood_pressure_systolic < 140 | blood_pressure_diastolic < 90 ~ "Hypertension Stage 1",
+      blood_pressure_systolic >= 140 | blood_pressure_diastolic >= 90 ~ "Hypertension Stage 2",
+      TRUE ~ "Other/NA"
+    ),
+    bmi_category = case_when(
+      most_recent_bmi_value < 18.5 ~ "Underweight",
+      most_recent_bmi_value < 25 ~ "Normal",
+      most_recent_bmi_value < 30 ~ "Overweight",
+      most_recent_bmi_value >= 30 ~ "Obese",
+      TRUE ~ "Other/NA"
+    )
+  ) %>%
+  # Creacion de la Presion de Pulso
+  mutate(
+    pulse_pressure = blood_pressure_systolic - blood_pressure_diastolic
+  )
+
+cat("Caracteristicas de signos vitales y mediciones clinicas creadas.\n")
+```
+
+## 2.4. Dominio: Medicamentos y Comportamiento del Paciente
+
+```{r engineer_meds_behavior}
+features_df <- features_df %>%
+  # Bandera de Polifarmacia
+  mutate(
+    is_polypharmacy_flag = if_else(active_medications > 5, 1, 0, missing = 0)
+  ) %>%
+  # Banderas de Clases de Medicamentos Especificas
+  mutate(
+    is_on_statin = if_else(!is.na(statin_med_name), 1, 0),
+    is_on_ace_arb = if_else(!is.na(ace_arb_med_name), 1, 0)
+  )
+
+cat("Caracteristicas de medicamentos y comportamiento creadas.\n")
+```
+
+# Fase 3: Ensamblaje y Revision del Dataset Final
+
+Ahora consolidamos nuestro trabajo, seleccionando las caracteristicas finales y revisando el impacto de nuestra transformacion.
+
+## 3.1. Seleccion del Conjunto Final de Caracteristicas
+
+```{r finalize_features}
+analysis_df <- features_df %>%
+  dplyr::select(
+    admission,
+    gender_incongruence_flag, race_clean, ethnicity_clean, zip_3_digit,
+    starts_with("sdoh_"), income_per_capita, housing_situation,
+    blood_pressure_systolic, blood_pressure_diastolic, most_recent_bmi_value, bp_category, bmi_category, pulse_pressure,
+    numeric_a1c_result, ldl_numeric_result, e_gfr_result,
+    is_polypharmacy_flag, is_on_statin, is_on_ace_arb,
+    patient_appointment_no_show_count,
+    risk_score
+  ) %>%
+  mutate(
+    admission = factor(admission, levels = c("No", "Yes"))
+  )
+```
+
+## 3.2. Comparativa del Impacto: Antes y Despues
+
+La siguiente tabla cuantifica el valor de nuestro trabajo de pre-procesamiento. Hemos restaurado el texto original en espanol, ya que el arreglo de codificacion inicial deberia manejarlo correctamente.
+
+```{r comparison_summary, echo=FALSE}
+# Creamos el dataframe para la tabla de comparacion.
+# El comando knitr::opts_knit$set(encoding = "UTF-8") al inicio del script
+# deberia permitir que esta tabla se renderice correctamente con acentos.
+comparison_data <- data.frame(
+  Metrica = c("Numero de Filas", "Numero de Columnas", "Estado de Valores Nulos", "Formato Presion Arterial", "Formato Triggers SDOH"),
+  Antes_Datos_Crudos = c(
+    as.character(nrow(raw_df)), as.character(ncol(raw_df)),
+    "Ocultos como texto", "Columna de texto ('120/80')", "Columna de texto unica"
+  ),
+  Despues_Ingenieria = c(
+    as.character(nrow(analysis_df)), as.character(ncol(analysis_df)),
+    "Explicitos (NA), listos para imputar", "Dos columnas numericas", "Multiples columnas binarias"
+  ),
+  Justificacion = c(
+    "Se preservaron todos los pacientes.", "Las columnas se refinaron a un set mas pequeno pero de mucho mayor valor.",
+    "La calidad de los datos ahora es transparente.", "Los datos son ahora analizables estadisticamente.",
+    "Datos no estructurados convertidos en predictores."
+  )
+)
+knitr::kable(comparison_data, caption = "Resumen del Impacto de la Transformacion de Datos")
+```
+
+## 3.3. Vistazo Final al Dataset Analitico
+
+Un ultimo resumen detallado de nuestro dataset final.
+
+```{r after_snapshot}
+cat("--- ESTADO FINAL: DATASET LISTO PARA ANaLISIS ---\n")
+skim(analysis_df)
+```
+
+# Fase 4: Definicion de la Receta de Pre-procesamiento Final
+
+Para los pasos finales, definimos una "receta" del paquete `tidymodels`. Esto asegura que las transformaciones se puedan aplicar de forma consistente en el futuro.
+
+```{r final_prep}
+library(recipes)
+
+# Definimos la "receta".
+preprocessing_recipe <- recipe(admission ~ ., data = analysis_df) %>%
+  step_impute_median(all_numeric_predictors()) %>%
+  step_impute_mode(all_nominal_predictors()) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors()) %>%
+  step_zv(all_predictors())
+
+# Imprimimos la receta para revisar los pasos definidos.
+print(preprocessing_recipe)
+```
+
+# Conclusion del Protocolo y Proximos Pasos
+
+Hemos completado exitosamente el protocolo de preparacion de datos. El resultado es un **activo analitico de alta calidad**, listo para la fase de modelado, donde construiremos y evaluaremos modelos para predecir el riesgo de admision.
